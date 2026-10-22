@@ -1,0 +1,12 @@
+# .NET build output
+bin/
+obj/
+*.user
+*.suo
+
+# IDE
+.vs/
+.idea/
+*.swp
+
+# Local app data is outside the repo (%LOCALAPPDATA%\InputGuard), nothing to ignore here
