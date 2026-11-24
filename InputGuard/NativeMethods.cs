@@ -99,6 +99,23 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern uint GetRawInputDeviceInfoW(IntPtr hDevice, uint uiCommand, IntPtr pData, ref uint pcbSize);
 
+    // ---------- 전원 알림 ----------
+    public const int WM_POWERBROADCAST = 0x0218;
+    public const int PBT_APMSUSPEND = 0x0004;
+    public const int PBT_POWERSETTINGCHANGE = 0x8013;
+
+    /// <summary> 화면 상태 (데이터: 0 = 꺼짐, 1 = 켜짐, 2 = 어두워짐). 최신 대기 모드 진입 시에도 꺼짐으로 통지된다. </summary>
+    public static readonly Guid GUID_CONSOLE_DISPLAY_STATE = new("6FE69556-704A-47A0-8F24-C28D936FDA47");
+
+    /// <summary> POWERBROADCAST_SETTING 에서 Data 필드의 오프셋 (GUID 16 + DataLength 4). </summary>
+    public const int POWERBROADCAST_SETTING_DATA_OFFSET = 20;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr RegisterPowerSettingNotification(IntPtr hRecipient, ref Guid powerSettingGuid, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool UnregisterPowerSettingNotification(IntPtr handle);
+
     // ---------- CfgMgr32 ----------
     public const int CR_SUCCESS = 0;
     public const int CR_NEED_RESTART = 0x22;

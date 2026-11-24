@@ -24,6 +24,7 @@ public sealed class TrayAppContext : ApplicationContext
     private readonly bool _isAdmin;
     private GuardState? _lastState;
     private bool _exiting;
+    private bool _displayOn = true;
 
     public TrayAppContext()
     {
@@ -68,13 +69,17 @@ public sealed class TrayAppContext : ApplicationContext
 
         _watcher = new DeviceWatcherWindow(
             onDeviceChange: () => { _debounce.Stop(); _debounce.Start(); },
-            onRawInput: OnRawInput);
+            onRawInput: OnRawInput,
+            onDisplayState: OnDisplayState,
+            onSuspend: () => EnterHold("절전 진입"));
 
         Log($"=== InputGuard 시작 (관리자: {_isAdmin}) ===");
         if (!_isAdmin)
             Log("[경고] 관리자 권한이 아니어서 장치 비활성화가 실패할 수 있습니다.");
         else if (Autostart.UpgradeIfOutdated() is string upgraded)
             Log("[자동 시작] " + upgraded);
+        if (!_watcher.PowerNotifyRegistered)
+            Log("[경고] 화면 상태 알림 등록 실패: 절전 대비(화면이 꺼질 때 터치패드 켜 두기)가 동작하지 않습니다.");
 
         // 1) 이전 실행이 비정상 종료되어 꺼진 채 남은 장치가 있으면 먼저 복구
         var recovered = _guard.EnableAll("시작 시 복구");
@@ -98,9 +103,36 @@ public sealed class TrayAppContext : ApplicationContext
 
     private void OnRawInput(IntPtr hDevice, uint rimType)
     {
-        var learned = _engine.OnRawInput(hDevice, rimType);
+        var learned = _engine.OnRawInput(hDevice, rimType, out bool externalMouseInput);
+
+        // 절전 대비 해제: 화면이 켜진 상태에서 외장 마우스가 실제로 움직였을 때만. (화면이 꺼진 동안의 입력은 가방 속에서 눌린 것일 수 있다)
+        if (externalMouseInput && _guard.Hold && _displayOn)
+        {
+            _guard.Hold = false;
+            EvaluateState("외장 마우스 입력 확인: 절전 대비 해제", quiet: true);
+        }
+
         if (learned != null)
             EvaluateState($"입력 활동으로 역할 판정: {learned.Name} [{learned.Transport}] → {learned.RoleText}");
+    }
+
+    private void OnDisplayState(bool on)
+    {
+        _displayOn = on;
+        if (!on) EnterHold("화면 꺼짐");
+        else if (_guard.Hold) EvaluateState("화면 켜짐", quiet: true); // 외장 마우스가 이미 없으면 여기서 해제된다
+    }
+
+    /// <summary>
+    /// 화면이 꺼지거나 절전에 들어갈 때 터치패드를 미리 켜 둔다. 최신 대기 모드에서는 이 프로세스가 멈추기 때문에,
+    /// 그 사이 마우스가 끊기면 깨어난 뒤에야 터치패드를 켤 수 있고 그동안 포인터를 쓸 수 없다.
+    /// 깨어난 뒤 외장 마우스 입력이 들어오면 OnRawInput 에서 해제한다.
+    /// </summary>
+    private void EnterHold(string reason)
+    {
+        if (_exiting || _guard.Hold) return;
+        _guard.Hold = true;
+        EvaluateState($"{reason}: 외장 마우스 입력이 들어올 때까지 터치패드를 켜 둠", quiet: true);
     }
 
     private void Rescan(bool showAlways)
@@ -131,11 +163,15 @@ public sealed class TrayAppContext : ApplicationContext
 
     /// <summary>
     /// 상태를 다시 계산해 내장 장치에 적용하고, 상태가 바뀌었거나 실제로 켜고 끈 것이 있으면 알림을 띄운다. 알림을 띄웠으면 true.
+    /// quiet 면 로그만 남긴다 (화면이 꺼지고 켜질 때마다 알림이 뜨지 않도록).
     /// </summary>
-    private bool EvaluateState(string? reason)
+    private bool EvaluateState(string? reason, bool quiet = false)
     {
         if (_exiting) return false;
         var state = _engine.ComputeState();
+        // 화면이 켜져 있고 외장 장치가 하나도 없으면 절전 대비는 할 일이 없다. 이후에 연결되는 마우스는 평소처럼 처리한다.
+        if (_guard.Hold && _displayOn && !state.ExternalMousePresent && !state.ExternalKeyboardPresent)
+            _guard.Hold = false;
         UpdateTrayText(state);
 
         bool changed = !state.SameAs(_lastState);
@@ -143,6 +179,11 @@ public sealed class TrayAppContext : ApplicationContext
         _lastState = state;
 
         var applied = _guard.Apply(state, _engine.Devices.Values);
+        if (quiet)
+        {
+            Log($"[절전] {reason} | {StateText(state).Replace('\n', ' ')}" + (applied.Any ? " | " + applied.Text.Replace('\n', ' ') : ""));
+            return false;
+        }
         if (!changed && !applied.Any) return false;
 
         var sb = new StringBuilder();
@@ -154,6 +195,7 @@ public sealed class TrayAppContext : ApplicationContext
         bool kbOn = state.ExternalKeyboardPresent, msOn = state.ExternalMousePresent;
         bool kbWas = prev?.ExternalKeyboardPresent ?? false, msWas = prev?.ExternalMousePresent ?? false;
         if (_guard.Paused) title = "일시 중지 중";
+        else if (_guard.Hold) title = "절전 대비 중 (터치패드 켜 둠)";
         else if ((kbOn && !kbWas) || (msOn && !msWas)) title = "외장 마우스 감지 → 터치패드 끔";
         else if ((!kbOn && kbWas) || (!msOn && msWas)) title = "외장 마우스 없음 → 터치패드 켬";
         else title = "상태 적용";
@@ -188,6 +230,7 @@ public sealed class TrayAppContext : ApplicationContext
         string ms = s.ExternalMousePresent ? string.Join(", ", s.ExternalMice.Select(d => d.Name)) : "없음";
         string plan;
         if (_guard.Paused) plan = "→ 일시 중지: 터치패드 켜짐";
+        else if (_guard.Hold) plan = "→ 절전 대비: 외장 마우스를 움직일 때까지 터치패드 켜짐";
         else
         {
             var targets = new List<string>();
@@ -205,6 +248,7 @@ public sealed class TrayAppContext : ApplicationContext
     {
         string text = _guard.Paused
             ? "InputGuard | 일시 중지"
+            : _guard.Hold ? "InputGuard | 절전 대비 → 터치패드 켜짐"
             : $"InputGuard | 외장 마우스 {(s.ExternalMousePresent ? "있음 → 터치패드 꺼짐" : "없음 → 터치패드 켜짐")}";
         _tray.Text = text.Length > 63 ? text[..63] : text;
     }
@@ -346,13 +390,18 @@ internal sealed class DeviceWatcherWindow : NativeWindow
 {
     private readonly Action _onDeviceChange;
     private readonly Action<IntPtr, uint> _onRawInput;
+    private readonly Action<bool> _onDisplayState;
+    private readonly Action _onSuspend;
     private readonly IntPtr _buf;
     private readonly uint _headerSize;
+    private IntPtr _powerNotify;
 
-    public DeviceWatcherWindow(Action onDeviceChange, Action<IntPtr, uint> onRawInput)
+    public DeviceWatcherWindow(Action onDeviceChange, Action<IntPtr, uint> onRawInput, Action<bool> onDisplayState, Action onSuspend)
     {
         _onDeviceChange = onDeviceChange;
         _onRawInput = onRawInput;
+        _onDisplayState = onDisplayState;
+        _onSuspend = onSuspend;
         _headerSize = (uint)Marshal.SizeOf<RAWINPUTHEADER>();
         _buf = Marshal.AllocHGlobal((int)_headerSize);
 
@@ -366,7 +415,13 @@ internal sealed class DeviceWatcherWindow : NativeWindow
         };
         if (!RegisterRawInputDevices(rid, (uint)rid.Length, (uint)Marshal.SizeOf<RAWINPUTDEVICE>()))
             throw new InvalidOperationException("RegisterRawInputDevices 실패: " + Marshal.GetLastWin32Error());
+
+        // 화면 상태 알림 (등록 직후 현재 상태가 한 번 통지된다). 실패해도 나머지 기능은 그대로 동작한다.
+        Guid displayState = GUID_CONSOLE_DISPLAY_STATE;
+        _powerNotify = RegisterPowerSettingNotification(Handle, ref displayState, 0 /* DEVICE_NOTIFY_WINDOW_HANDLE */);
     }
+
+    public bool PowerNotifyRegistered => _powerNotify != IntPtr.Zero;
 
     protected override void WndProc(ref Message m)
     {
@@ -387,12 +442,27 @@ internal sealed class DeviceWatcherWindow : NativeWindow
                 }
                 break; // DefWindowProc 가 버퍼 정리를 하도록 base 로 넘긴다
             }
+
+            case WM_POWERBROADCAST:
+            {
+                int evt = (int)m.WParam;
+                if (evt == PBT_APMSUSPEND) _onSuspend();
+                else if (evt == PBT_POWERSETTINGCHANGE && m.LParam != IntPtr.Zero &&
+                         Marshal.PtrToStructure<Guid>(m.LParam) == GUID_CONSOLE_DISPLAY_STATE)
+                {
+                    int state = Marshal.ReadInt32(m.LParam, POWERBROADCAST_SETTING_DATA_OFFSET);
+                    if (state == 0) _onDisplayState(false);      // 꺼짐
+                    else if (state == 1) _onDisplayState(true);  // 켜짐 (2 = 어두워짐은 무시)
+                }
+                break;
+            }
         }
         base.WndProc(ref m);
     }
 
     public override void DestroyHandle()
     {
+        if (_powerNotify != IntPtr.Zero) { UnregisterPowerSettingNotification(_powerNotify); _powerNotify = IntPtr.Zero; }
         base.DestroyHandle();
         Marshal.FreeHGlobal(_buf);
     }

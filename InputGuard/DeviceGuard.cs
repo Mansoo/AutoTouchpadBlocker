@@ -19,6 +19,13 @@ public sealed class DeviceGuard
     /// <summary> true 면 아무것도 끄지 않고, 이미 꺼 둔 것은 모두 되돌린다. </summary>
     public bool Paused { get; set; }
 
+    /// <summary>
+    /// 절전 대비. true 면 Paused 와 같이 아무것도 끄지 않고 꺼 둔 것은 되돌린다.
+    /// 최신 대기 모드에서는 프로세스가 멈춰 있어서 그 사이 마우스가 끊겨도 터치패드를 켜 줄 수 없으므로,
+    /// 화면이 꺼질 때 미리 켜 두고 깨어난 뒤 외장 마우스 입력이 실제로 들어오면 해제한다.
+    /// </summary>
+    public bool Hold { get; set; }
+
     public DeviceGuard(Func<Settings> settings, Action<string> log)
     {
         _settings = settings;
@@ -53,8 +60,9 @@ public sealed class DeviceGuard
     /// <summary> 상태에 맞춰 내장 장치를 켜고 끈다. 멱등. </summary>
     public ApplyResult Apply(GuardState state, IEnumerable<PhysicalDevice> devices)
     {
-        bool wantKb = !Paused && state.ExternalKeyboardPresent;
-        bool wantMs = !Paused && state.ExternalMousePresent;
+        bool active = !Paused && !Hold;
+        bool wantKb = active && state.ExternalKeyboardPresent;
+        bool wantMs = active && state.ExternalMousePresent;
         var settings = _settings();
         var result = new ApplyResult();
 

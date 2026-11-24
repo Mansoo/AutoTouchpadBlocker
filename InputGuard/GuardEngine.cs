@@ -243,9 +243,11 @@ public sealed class GuardEngine
 
     /// <summary>
     /// WM_INPUT 한 건. 역할이 새로 학습되면 그 장치를 반환, 아니면 null.
+    /// externalMouseInput: 마우스 역할로 판정된 외장 장치가 보낸 마우스 입력이면 true (그 마우스가 실제로 쓰이고 있다는 증거).
     /// </summary>
-    public PhysicalDevice? OnRawInput(IntPtr hDevice, uint rimType)
+    public PhysicalDevice? OnRawInput(IntPtr hDevice, uint rimType, out bool externalMouseInput)
     {
+        externalMouseInput = false;
         if (hDevice == IntPtr.Zero) return null; // SendInput 등 주입 입력
         if (!_byHandle.TryGetValue(hDevice, out var entry))
         {
@@ -269,13 +271,17 @@ public sealed class GuardEngine
         else if (kind == DeviceKind.Mouse) { dev.MouseEvents++; dev.LastMouse = now; }
         else return null;
 
-        if (dev.Manual || dev.Origin != DeviceOrigin.External) return null;
+        if (dev.Origin != DeviceOrigin.External) return null;
 
         bool learned = false;
-        if (kind == DeviceKind.Keyboard && !dev.IsKeyboard && dev.KeyboardEvents >= Settings.KeyboardEventThreshold)
-        { dev.IsKeyboard = true; learned = true; }
-        if (kind == DeviceKind.Mouse && !dev.IsMouse && dev.MouseEvents >= Settings.MouseEventThreshold)
-        { dev.IsMouse = true; learned = true; }
+        if (!dev.Manual)
+        {
+            if (kind == DeviceKind.Keyboard && !dev.IsKeyboard && dev.KeyboardEvents >= Settings.KeyboardEventThreshold)
+            { dev.IsKeyboard = true; learned = true; }
+            if (kind == DeviceKind.Mouse && !dev.IsMouse && dev.MouseEvents >= Settings.MouseEventThreshold)
+            { dev.IsMouse = true; learned = true; }
+        }
+        externalMouseInput = kind == DeviceKind.Mouse && dev.IsMouse;
 
         if (!learned) return null;
         PersistRole(dev);
