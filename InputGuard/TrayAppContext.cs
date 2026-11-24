@@ -73,6 +73,8 @@ public sealed class TrayAppContext : ApplicationContext
         Log($"=== InputGuard 시작 (관리자: {_isAdmin}) ===");
         if (!_isAdmin)
             Log("[경고] 관리자 권한이 아니어서 장치 비활성화가 실패할 수 있습니다.");
+        else if (Autostart.UpgradeIfOutdated() is string upgraded)
+            Log("[자동 시작] " + upgraded);
 
         // 1) 이전 실행이 비정상 종료되어 꺼진 채 남은 장치가 있으면 먼저 복구
         var recovered = _guard.EnableAll("시작 시 복구");
