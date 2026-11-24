@@ -4,8 +4,8 @@ namespace InputGuard;
 
 /// <summary>
 /// 판정 상태에 따라 내장 터치패드(설정에 따라 키보드도) 장치 노드를 끄고 켠다 (관리자 권한 필요).
-/// CM_Disable_DevNode = 장치 관리자의 "사용 안 함". PERSIST 플래그 없이도 꺼진 상태가 재부팅 후에 남는 것이 확인됐으므로
-/// Windows 가 되돌려 주리라 기대하면 안 된다. 꺼 둔 장치는 설정 파일에 기억해, 비정상 종료 후 다시 시작하면 먼저 복구한다.
+/// CM_Disable_DevNode = 장치 관리자의 "사용 안 함". PERSIST 플래그는 쓰지 않지만, 재부팅 때 Windows 가 되돌려 주는지는
+/// 확인하지 못했으므로 거기에 기대지 않는다. 꺼 둔 장치는 설정 파일에 기억해, 비정상 종료 후 다시 시작하면 먼저 복구한다.
 /// </summary>
 public sealed class DeviceGuard
 {

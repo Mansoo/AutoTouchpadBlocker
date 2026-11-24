@@ -50,8 +50,8 @@ public static class Autostart
     }
 
     /// <summary>
-    /// 예전 버전이 등록한 작업은 schtasks 기본값 때문에 배터리로 전환되거나 72시간이 지나면 작업 스케줄러가 프로세스를 강제 종료한다.
-    /// 강제 종료되면 꺼 둔 터치패드를 되돌릴 기회가 없으므로, 그런 작업이 남아 있으면 새 정의로 다시 등록한다.
+    /// 예전 버전이 등록한 작업은 schtasks 기본값 때문에 배터리 상태에서는 시작되지 않고(수동 실행도 Queued 에 머무름),
+    /// 배터리 전환 시 중지·72시간 실행 제한 조건이 붙어 있다. 그런 작업이 남아 있으면 새 정의로 다시 등록한다.
     /// 한 일이 있으면 로그에 남길 문장을, 없으면 null 을 반환.
     /// </summary>
     public static string? UpgradeIfOutdated()
@@ -66,12 +66,13 @@ public static class Autostart
             return $"예전 방식으로 등록된 작업이 다른 실행 파일을 가리켜 그대로 둠 (메뉴에서 자동 시작을 껐다 켜면 갱신됨). 현재 exe={exe}";
 
         var (ok, msg) = Enable();
-        return $"예전 방식 작업(배터리 전환/72시간 후 강제 종료)을 새 정의로 재등록 {(ok ? "성공" : "실패")}: {msg}";
+        return $"예전 방식 작업(배터리 조건/72시간 실행 제한)을 새 정의로 재등록 {(ok ? "성공" : "실패")}: {msg}";
     }
 
     /// <summary>
     /// schtasks /SC ONLOGON 기본값과 다른 점:
-    /// 배터리에서도 시작하고 배터리로 바뀌어도 멈추지 않음, 실행 시간 제한 없음, 비정상 종료 시 1분 뒤 재시작(시작 시 복구가 터치패드를 되돌림).
+    /// 배터리에서도 시작하고 배터리로 바뀌어도 멈추지 않음, 실행 시간 제한 없음.
+    /// RestartOnFailure 는 넣지 않는다: 프로세스가 외부에서 강제 종료(종료 코드 1)돼도 작업 스케줄러가 다시 띄우지 않는 것을 확인했다.
     /// </summary>
     private static string BuildTaskXml(string exe, string userName, string userSid) => $"""
         <?xml version="1.0" encoding="UTF-16"?>
@@ -102,10 +103,6 @@ public static class Autostart
             <Enabled>true</Enabled>
             <Hidden>false</Hidden>
             {NoTimeLimit}
-            <RestartOnFailure>
-              <Interval>PT1M</Interval>
-              <Count>3</Count>
-            </RestartOnFailure>
           </Settings>
           <Actions Context="Author">
             <Exec>
